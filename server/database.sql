@@ -1,14 +1,9 @@
 -- ==========================================
--- CLEANUP AND MIGRATION SCRIPT
+-- CLEANUP AND MIGRATION SCRIPT - SIMPLIFIED
 -- ==========================================
 -- Run this to clean up and set up user isolation properly
 
--- Step 1: Delete old data (optional but recommended)
--- Uncomment if you want to start fresh
--- DELETE FROM tasks;
--- DELETE FROM employees;
-
--- Step 2: Drop ALL existing policies
+-- Step 1: Drop ALL existing policies (safe to run multiple times)
 DO $$ 
 DECLARE
     pol RECORD;
@@ -30,10 +25,13 @@ BEGIN
     LOOP
         EXECUTE format('DROP POLICY IF EXISTS %I ON tasks', pol.policyname);
     END LOOP;
+    
+    RAISE NOTICE '✅ Step 1: All old policies dropped';
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE '⚠️ Step 1 Warning: %', SQLERRM;
 END $$;
 
--- Step 3: Fix UNIQUE constraints (drop old, add new with user_id)
--- Drop the old unique constraint on email (if it exists)
+-- Step 2: Fix UNIQUE constraints
 DO $$ 
 BEGIN
     -- Drop unique constraint on employees.email if it exists
@@ -43,18 +41,32 @@ BEGIN
         AND conrelid = 'employees'::regclass
     ) THEN
         ALTER TABLE employees DROP CONSTRAINT employees_email_key;
+        RAISE NOTICE '✅ Step 2: Dropped old email unique constraint';
+    ELSE
+        RAISE NOTICE '✅ Step 2: No old constraint to drop (already fixed)';
     END IF;
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE '❌ Step 2 Error: %', SQLERRM;
 END $$;
 
--- Step 4: Add user_id columns if they don't exist
-ALTER TABLE employees 
-ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE;
+-- Step 3: Add user_id columns
+DO $$
+BEGIN
+    ALTER TABLE employees ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE;
+    RAISE NOTICE '✅ Step 3a: Added user_id to employees';
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE '❌ Step 3a Error: %', SQLERRM;
+END $$;
 
-ALTER TABLE tasks 
-ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE;
+DO $$
+BEGIN
+    ALTER TABLE tasks ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE;
+    RAISE NOTICE '✅ Step 3b: Added user_id to tasks';
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE '❌ Step 3b Error: %', SQLERRM;
+END $$;
 
--- Step 5: Add new unique constraint (email + user_id combination)
--- This allows different users to have employees with same email
+-- Step 4: Add new unique constraint
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -62,75 +74,161 @@ BEGIN
         WHERE conname = 'employees_email_user_id_key'
     ) THEN
         ALTER TABLE employees ADD CONSTRAINT employees_email_user_id_key UNIQUE (email, user_id);
+        RAISE NOTICE '✅ Step 4: Added new unique constraint (email, user_id)';
+    ELSE
+        RAISE NOTICE '✅ Step 4: Unique constraint already exists (skip)';
     END IF;
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE '❌ Step 4 Error: %', SQLERRM;
 END $$;
 
--- Step 6: Make user_id NOT NULL (important for RLS to work properly)
--- First, set a default for existing rows (you can change this or delete old data)
--- UPDATE employees SET user_id = (SELECT id FROM auth.users LIMIT 1) WHERE user_id IS NULL;
--- UPDATE tasks SET user_id = (SELECT id FROM auth.users LIMIT 1) WHERE user_id IS NULL;
+-- Step 5: Create indexes
+DO $$
+BEGIN
+    DROP INDEX IF EXISTS idx_employees_user_id;
+    CREATE INDEX idx_employees_user_id ON employees(user_id);
+    RAISE NOTICE '✅ Step 5a: Created index on employees.user_id';
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE '❌ Step 5a Error: %', SQLERRM;
+END $$;
 
--- Then make the column required
--- ALTER TABLE employees ALTER COLUMN user_id SET NOT NULL;
--- ALTER TABLE tasks ALTER COLUMN user_id SET NOT NULL;
+DO $$
+BEGIN
+    DROP INDEX IF EXISTS idx_tasks_user_id;
+    CREATE INDEX idx_tasks_user_id ON tasks(user_id);
+    RAISE NOTICE '✅ Step 5b: Created index on tasks.user_id';
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE '❌ Step 5b Error: %', SQLERRM;
+END $$;
 
--- Step 7: Create indexes for performance
-DROP INDEX IF EXISTS idx_employees_user_id;
-DROP INDEX IF EXISTS idx_tasks_user_id;
-CREATE INDEX idx_employees_user_id ON employees(user_id);
-CREATE INDEX idx_tasks_user_id ON tasks(user_id);
+-- Step 6: Enable RLS
+DO $$
+BEGIN
+    ALTER TABLE employees ENABLE ROW LEVEL SECURITY;
+    RAISE NOTICE '✅ Step 6a: RLS enabled on employees';
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE '⚠️ Step 6a: %', SQLERRM;
+END $$;
 
--- Step 8: Enable RLS
-ALTER TABLE employees ENABLE ROW LEVEL SECURITY;
-ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
+DO $$
+BEGIN
+    ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
+    RAISE NOTICE '✅ Step 6b: RLS enabled on tasks';
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE '⚠️ Step 6b: %', SQLERRM;
+END $$;
 
--- Step 9: Create NEW user isolation policies
--- EMPLOYEES POLICIES
-CREATE POLICY "Users can read own employees"
-ON employees FOR SELECT
-TO authenticated
-USING (auth.uid() = user_id);
+-- Step 7: Create RLS Policies for EMPLOYEES
+DO $$
+BEGIN
+    CREATE POLICY "Users can read own employees"
+    ON employees FOR SELECT
+    TO authenticated
+    USING (auth.uid() = user_id);
+    RAISE NOTICE '✅ Step 7a: Created SELECT policy for employees';
+EXCEPTION WHEN duplicate_object THEN
+    RAISE NOTICE '✅ Step 7a: Policy already exists (skip)';
+WHEN OTHERS THEN
+    RAISE NOTICE '❌ Step 7a Error: %', SQLERRM;
+END $$;
 
-CREATE POLICY "Users can insert own employees"
-ON employees FOR INSERT
-TO authenticated
-WITH CHECK (auth.uid() = user_id);
+DO $$
+BEGIN
+    CREATE POLICY "Users can insert own employees"
+    ON employees FOR INSERT
+    TO authenticated
+    WITH CHECK (auth.uid() = user_id);
+    RAISE NOTICE '✅ Step 7b: Created INSERT policy for employees';
+EXCEPTION WHEN duplicate_object THEN
+    RAISE NOTICE '✅ Step 7b: Policy already exists (skip)';
+WHEN OTHERS THEN
+    RAISE NOTICE '❌ Step 7b Error: %', SQLERRM;
+END $$;
 
-CREATE POLICY "Users can update own employees"
-ON employees FOR UPDATE
-TO authenticated
-USING (auth.uid() = user_id)
-WITH CHECK (auth.uid() = user_id);
+DO $$
+BEGIN
+    CREATE POLICY "Users can update own employees"
+    ON employees FOR UPDATE
+    TO authenticated
+    USING (auth.uid() = user_id)
+    WITH CHECK (auth.uid() = user_id);
+    RAISE NOTICE '✅ Step 7c: Created UPDATE policy for employees';
+EXCEPTION WHEN duplicate_object THEN
+    RAISE NOTICE '✅ Step 7c: Policy already exists (skip)';
+WHEN OTHERS THEN
+    RAISE NOTICE '❌ Step 7c Error: %', SQLERRM;
+END $$;
 
-CREATE POLICY "Users can delete own employees"
-ON employees FOR DELETE
-TO authenticated
-USING (auth.uid() = user_id);
+DO $$
+BEGIN
+    CREATE POLICY "Users can delete own employees"
+    ON employees FOR DELETE
+    TO authenticated
+    USING (auth.uid() = user_id);
+    RAISE NOTICE '✅ Step 7d: Created DELETE policy for employees';
+EXCEPTION WHEN duplicate_object THEN
+    RAISE NOTICE '✅ Step 7d: Policy already exists (skip)';
+WHEN OTHERS THEN
+    RAISE NOTICE '❌ Step 7d Error: %', SQLERRM;
+END $$;
 
--- TASKS POLICIES
-CREATE POLICY "Users can read own tasks"
-ON tasks FOR SELECT
-TO authenticated
-USING (auth.uid() = user_id);
+-- Step 8: Create RLS Policies for TASKS
+DO $$
+BEGIN
+    CREATE POLICY "Users can read own tasks"
+    ON tasks FOR SELECT
+    TO authenticated
+    USING (auth.uid() = user_id);
+    RAISE NOTICE '✅ Step 8a: Created SELECT policy for tasks';
+EXCEPTION WHEN duplicate_object THEN
+    RAISE NOTICE '✅ Step 8a: Policy already exists (skip)';
+WHEN OTHERS THEN
+    RAISE NOTICE '❌ Step 8a Error: %', SQLERRM;
+END $$;
 
-CREATE POLICY "Users can insert own tasks"
-ON tasks FOR INSERT
-TO authenticated
-WITH CHECK (auth.uid() = user_id);
+DO $$
+BEGIN
+    CREATE POLICY "Users can insert own tasks"
+    ON tasks FOR INSERT
+    TO authenticated
+    WITH CHECK (auth.uid() = user_id);
+    RAISE NOTICE '✅ Step 8b: Created INSERT policy for tasks';
+EXCEPTION WHEN duplicate_object THEN
+    RAISE NOTICE '✅ Step 8b: Policy already exists (skip)';
+WHEN OTHERS THEN
+    RAISE NOTICE '❌ Step 8b Error: %', SQLERRM;
+END $$;
 
-CREATE POLICY "Users can update own tasks"
-ON tasks FOR UPDATE
-TO authenticated
-USING (auth.uid() = user_id)
-WITH CHECK (auth.uid() = user_id);
+DO $$
+BEGIN
+    CREATE POLICY "Users can update own tasks"
+    ON tasks FOR UPDATE
+    TO authenticated
+    USING (auth.uid() = user_id)
+    WITH CHECK (auth.uid() = user_id);
+    RAISE NOTICE '✅ Step 8c: Created UPDATE policy for tasks';
+EXCEPTION WHEN duplicate_object THEN
+    RAISE NOTICE '✅ Step 8c: Policy already exists (skip)';
+WHEN OTHERS THEN
+    RAISE NOTICE '❌ Step 8c Error: %', SQLERRM;
+END $$;
 
-CREATE POLICY "Users can delete own tasks"
-ON tasks FOR DELETE
-TO authenticated
-USING (auth.uid() = user_id);
+DO $$
+BEGIN
+    CREATE POLICY "Users can delete own tasks"
+    ON tasks FOR DELETE
+    TO authenticated
+    USING (auth.uid() = user_id);
+    RAISE NOTICE '✅ Step 8d: Created DELETE policy for tasks';
+EXCEPTION WHEN duplicate_object THEN
+    RAISE NOTICE '✅ Step 8d: Policy already exists (skip)';
+WHEN OTHERS THEN
+    RAISE NOTICE '❌ Step 8d Error: %', SQLERRM;
+END $$;
 
 -- Step 10: Verify setup
-SELECT 'RLS Status:' as check_name;
+SELECT '' as separator;
+SELECT '=== VERIFICATION ===' as info;
 SELECT tablename, rowsecurity 
 FROM pg_tables 
 WHERE schemaname = 'public' 
