@@ -59,6 +59,8 @@ export interface Database {
                     created_at: string
                     updated_at: string
                     user_id: string
+                    parent_task_id: number | null
+                    extended_data: Json | null
                 }
                 Insert: {
                     id?: number
@@ -71,6 +73,8 @@ export interface Database {
                     created_at?: string
                     updated_at?: string
                     user_id: string
+                    parent_task_id?: number | null
+                    extended_data?: Json | null
                 }
                 Update: {
                     id?: number
@@ -83,6 +87,8 @@ export interface Database {
                     created_at?: string
                     updated_at?: string
                     user_id?: string
+                    parent_task_id?: number | null
+                    extended_data?: Json | null
                 }
             }
         }

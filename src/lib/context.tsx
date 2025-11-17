@@ -143,7 +143,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       toast.success('Employee added successfully');
     } catch (error: any) {
       console.error('Error adding employee:', error);
-      
+
       // More detailed error messages
       let errorMessage = 'Failed to add employee';
       if (error?.message) {
@@ -158,7 +158,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       if (error?.message?.includes('violates row-level security')) {
         errorMessage = 'Authentication error. Please sign out and sign in again.';
       }
-      
+
       toast.error(errorMessage);
       console.error('Full error details:', JSON.stringify(error, null, 2));
       throw error;

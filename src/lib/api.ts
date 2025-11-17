@@ -1,5 +1,10 @@
 import { supabase } from './supabase';
 import type { Employee, Task } from './data';
+import type { Database } from './database.types';
+
+type EmployeeInsert = Database['public']['Tables']['employees']['Insert'];
+type TaskInsert = Database['public']['Tables']['tasks']['Insert'];
+type TaskUpdate = Database['public']['Tables']['tasks']['Update'];
 
 // Helper to get current user ID
 async function getCurrentUserId(): Promise<string> {
@@ -36,10 +41,15 @@ export async function createEmployee(employee: Omit<Employee, 'id'>) {
     const userId = await getCurrentUserId();
     console.log('Creating employee with user_id:', userId);
     console.log('Employee data:', employee);
-    
+
+    const employeeData: EmployeeInsert = {
+        ...employee,
+        user_id: userId
+    };
+
     const { data, error } = await supabase
         .from('employees')
-        .insert({ ...employee, user_id: userId })
+        .insert(employeeData as any)
         .select()
         .single();
 
@@ -50,14 +60,14 @@ export async function createEmployee(employee: Omit<Employee, 'id'>) {
         console.error('Error details:', error.details);
         throw error;
     }
-    
+
     console.log('Employee created successfully:', data);
     return data as Employee;
 }
 
 export async function updateEmployee(id: number, updates: Partial<Employee>) {
     // RLS policy ensures user can only update their own employees
-    const { data, error } = await supabase
+    const { data, error } = await (supabase as any)
         .from('employees')
         .update(updates)
         .eq('id', id)
@@ -87,7 +97,7 @@ export async function getTasks() {
         .order('created_at', { ascending: false });
 
     if (error) throw error;
-    
+
     // Merge extended_data into task objects
     return (data as Task[]).map(task => {
         if (task.extended_data) {
@@ -106,7 +116,7 @@ export async function getTaskById(id: number) {
         .single();
 
     if (error) throw error;
-    
+
     // Merge extended_data into task object
     const task = data as Task;
     if (task.extended_data) {
@@ -129,19 +139,9 @@ export async function getTasksByEmployee(employeeId: number) {
 
 export async function createTask(task: Omit<Task, 'id' | 'created_at'>) {
     const userId = await getCurrentUserId();
-    const { data, error } = await supabase
-        .from('tasks')
-        .insert({ ...task, user_id: userId })
-        .select()
-        .single();
-
-    if (error) throw error;
-    return data as Task;
-}
-
-export async function updateTask(id: number, updates: Partial<Task>) {
+    
     // Separate core fields from extended fields
-    const { comments, attachments, subtasks, depends_on, template_id, ...coreUpdates } = updates;
+    const { comments, attachments, subtasks, depends_on, template_id, ...coreTask } = task;
     
     // Prepare extended data as JSON
     const extendedData: any = {};
@@ -151,27 +151,62 @@ export async function updateTask(id: number, updates: Partial<Task>) {
     if (depends_on !== undefined) extendedData.depends_on = depends_on;
     if (template_id !== undefined) extendedData.template_id = template_id;
     
-    // Combine core updates with extended data
-    const finalUpdates = {
-        ...coreUpdates,
+    const taskData: TaskInsert = {
+        ...coreTask,
+        user_id: userId,
         ...(Object.keys(extendedData).length > 0 && { extended_data: extendedData })
     };
-    
+
     const { data, error } = await supabase
         .from('tasks')
-        .update(finalUpdates)
-        .eq('id', id)
+        .insert(taskData as any)
         .select()
         .single();
 
     if (error) throw error;
     
     // Merge extended data back into the task object
+    const resultTask = data as Task;
+    if (resultTask.extended_data) {
+        Object.assign(resultTask, resultTask.extended_data);
+    }
+    
+    return resultTask;
+}
+
+export async function updateTask(id: number, updates: Partial<Task>) {
+    // Separate core fields from extended fields
+    const { comments, attachments, subtasks, depends_on, template_id, ...coreUpdates } = updates;
+
+    // Prepare extended data as JSON
+    const extendedData: any = {};
+    if (comments !== undefined) extendedData.comments = comments;
+    if (attachments !== undefined) extendedData.attachments = attachments;
+    if (subtasks !== undefined) extendedData.subtasks = subtasks;
+    if (depends_on !== undefined) extendedData.depends_on = depends_on;
+    if (template_id !== undefined) extendedData.template_id = template_id;
+
+    // Combine core updates with extended data
+    const taskUpdates: TaskUpdate = {
+        ...coreUpdates,
+        ...(Object.keys(extendedData).length > 0 && { extended_data: extendedData })
+    };
+
+    const { data, error } = await (supabase as any)
+        .from('tasks')
+        .update(taskUpdates)
+        .eq('id', id)
+        .select()
+        .single();
+
+    if (error) throw error;
+
+    // Merge extended data back into the task object
     const task = data as Task;
     if (task.extended_data) {
         Object.assign(task, task.extended_data);
     }
-    
+
     return task;
 }
 
