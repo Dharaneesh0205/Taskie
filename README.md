@@ -40,21 +40,23 @@ Check out the deployed project at: [https://taskie-xi.vercel.app/](https://taski
 Add screenshots or a short screen recording (GIF/video link) showing main features/flow. Some placeholders:
 
 - Task dashboard view  
-  ![Dashboard Screenshot](screenshots/dashboard.png)
+  ![Dashboard Screenshot]<img width="1897" height="962" alt="image" src="https://github.com/user-attachments/assets/465d728c-4998-4454-9204-7ab19b26cc3e" />
+
 - Task creation screen  
-  ![Create Task Screenshot](screenshots/create-task.png)
+  ![Create Task Screenshot]<img width="1917" height="970" alt="image" src="https://github.com/user-attachments/assets/c8a078cd-7c23-4d2c-a3f4-3f9cdc11d4c9" />
 
-*If you have a video/gif, you can embed it like:*  
-[![Screen Recording](screenshots/recording_thumb.png)](screenshots/demo.mp4)
 
-## 💡 Assumptions & Bonus Features
+- Employee Creation screen
+- ![Create Employee Screenshot]<img width="1900" height="974" alt="image" src="https://github.com/user-attachments/assets/5193ae93-d88a-4212-9357-9f51ade970d6" />
+
+
+## 💡 Assumptions
 
 - Users are authenticated via Supabase.
 - Each user can create, assign, update, and complete tasks.
 - Basic role separation exists (Admin vs Employee).
 - Responsive UI for desktop and mobile.
-- **Bonus:** Real-time task updates using Supabase's subscription.
-- **Bonus:** Dark mode support (if implemented).
+
 
 ## 📬 Submission
 
