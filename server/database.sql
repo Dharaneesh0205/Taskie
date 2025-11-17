@@ -32,14 +32,40 @@ BEGIN
     END LOOP;
 END $$;
 
--- Step 3: Add user_id columns if they don't exist
+-- Step 3: Fix UNIQUE constraints (drop old, add new with user_id)
+-- Drop the old unique constraint on email (if it exists)
+DO $$ 
+BEGIN
+    -- Drop unique constraint on employees.email if it exists
+    IF EXISTS (
+        SELECT 1 FROM pg_constraint 
+        WHERE conname = 'employees_email_key' 
+        AND conrelid = 'employees'::regclass
+    ) THEN
+        ALTER TABLE employees DROP CONSTRAINT employees_email_key;
+    END IF;
+END $$;
+
+-- Step 4: Add user_id columns if they don't exist
 ALTER TABLE employees 
 ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE;
 
 ALTER TABLE tasks 
 ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE;
 
--- Step 4: Make user_id NOT NULL (important for RLS to work properly)
+-- Step 5: Add new unique constraint (email + user_id combination)
+-- This allows different users to have employees with same email
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint 
+        WHERE conname = 'employees_email_user_id_key'
+    ) THEN
+        ALTER TABLE employees ADD CONSTRAINT employees_email_user_id_key UNIQUE (email, user_id);
+    END IF;
+END $$;
+
+-- Step 6: Make user_id NOT NULL (important for RLS to work properly)
 -- First, set a default for existing rows (you can change this or delete old data)
 -- UPDATE employees SET user_id = (SELECT id FROM auth.users LIMIT 1) WHERE user_id IS NULL;
 -- UPDATE tasks SET user_id = (SELECT id FROM auth.users LIMIT 1) WHERE user_id IS NULL;
@@ -48,17 +74,17 @@ ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id) ON DELETE CASCAD
 -- ALTER TABLE employees ALTER COLUMN user_id SET NOT NULL;
 -- ALTER TABLE tasks ALTER COLUMN user_id SET NOT NULL;
 
--- Step 5: Create indexes for performance
+-- Step 7: Create indexes for performance
 DROP INDEX IF EXISTS idx_employees_user_id;
 DROP INDEX IF EXISTS idx_tasks_user_id;
 CREATE INDEX idx_employees_user_id ON employees(user_id);
 CREATE INDEX idx_tasks_user_id ON tasks(user_id);
 
--- Step 6: Enable RLS
+-- Step 8: Enable RLS
 ALTER TABLE employees ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
 
--- Step 7: Create NEW user isolation policies
+-- Step 9: Create NEW user isolation policies
 -- EMPLOYEES POLICIES
 CREATE POLICY "Users can read own employees"
 ON employees FOR SELECT
@@ -103,7 +129,7 @@ ON tasks FOR DELETE
 TO authenticated
 USING (auth.uid() = user_id);
 
--- Step 8: Verify setup
+-- Step 10: Verify setup
 SELECT 'RLS Status:' as check_name;
 SELECT tablename, rowsecurity 
 FROM pg_tables 
@@ -129,6 +155,30 @@ ORDER BY tablename, policyname;
 -- TESTING SECTION
 -- ==========================================
 -- Run these tests after the migration to verify everything works
+
+SELECT '' as separator;
+SELECT '=== PRE-FLIGHT CHECKS ===' as info;
+
+-- Check 0: Verify tables exist
+SELECT '' as separator;
+SELECT 'Check 0: Tables Exist' as test;
+SELECT 
+    table_name,
+    CASE WHEN table_name IN (SELECT table_name FROM information_schema.tables WHERE table_schema = 'public') 
+        THEN '✅ EXISTS' 
+        ELSE '❌ MISSING' 
+    END as status
+FROM (VALUES ('employees'), ('tasks')) AS t(table_name);
+
+-- Check constraints on employees table
+SELECT '' as separator;
+SELECT 'Check: Unique Constraints on Employees' as test;
+SELECT 
+    conname as constraint_name,
+    pg_get_constraintdef(oid) as definition
+FROM pg_constraint
+WHERE conrelid = 'employees'::regclass
+AND contype = 'u';
 
 SELECT '' as separator;
 SELECT '=== TESTING SECTION ===' as info;
@@ -158,7 +208,11 @@ BEGIN
         RAISE NOTICE '❌ Cannot test - not authenticated. Log in to Supabase Dashboard first.';
     END IF;
 EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE '❌ Insert failed: %', SQLERRM;
+    RAISE NOTICE '❌ Insert failed: % (SQLSTATE: %)', SQLERRM, SQLSTATE;
+    RAISE NOTICE 'Common causes:';
+    RAISE NOTICE '  - UNIQUE constraint: Email already exists for this user';
+    RAISE NOTICE '  - RLS policy: user_id does not match authenticated user';
+    RAISE NOTICE '  - Missing column: Check if user_id column exists';
 END $$;
 
 -- Test 3: Check if you can read your own data
