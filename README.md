@@ -50,12 +50,15 @@ Add screenshots or a short screen recording (GIF/video link) showing main featur
 - ![Create Employee Screenshot]<img width="1900" height="974" alt="image" src="https://github.com/user-attachments/assets/5193ae93-d88a-4212-9357-9f51ade970d6" />
 
 
-## 💡 Assumptions
+## 💡 Assumptions & Bonus Features
 
-- Users are authenticated via Supabase.
-- Each user can create, assign, update, and complete tasks.
-- Basic role separation exists (Admin vs Employee).
-- Responsive UI for desktop and mobile.
+- User authentication via Supabase.
+- Employees and tasks managed with full CRUD operations.
+- Roles: Admin and Employee (with basic separation).
+- Responsive design for desktop and mobile.
+- **Bonus:** 
+  - Real-time updates using Supabase subscriptions.
+  - Application deployed and publicly accessible.
 
 
 ## 📬 Submission
@@ -65,6 +68,11 @@ For project access and demo, please refer to:
 
 - GitHub: [https://github.com/Dharaneesh0205/Taskie](https://github.com/Dharaneesh0205/Taskie)
 - Website: [https://taskie-xi.vercel.app/](https://taskie-xi.vercel.app/)
+
+**Note:**  
+This submission addresses all three tracks (Frontend, Backend, and Full-stack), as outlined in the assessment instructions. Please refer to the README and demo links for a complete review.
+
+For further queries or clarification, feel free to reach out!
 
 ---
 
