@@ -4,27 +4,33 @@
 -- Run this to clean up and set up user isolation properly
 
 -- Step 1: Delete old data (optional but recommended)
-DELETE FROM tasks;
-DELETE FROM employees;
+-- Uncomment if you want to start fresh
+-- DELETE FROM tasks;
+-- DELETE FROM employees;
 
 -- Step 2: Drop ALL existing policies
-DROP POLICY IF EXISTS "Users can read own employees" ON employees;
-DROP POLICY IF EXISTS "Users can insert own employees" ON employees;
-DROP POLICY IF EXISTS "Users can update own employees" ON employees;
-DROP POLICY IF EXISTS "Users can delete own employees" ON employees;
-DROP POLICY IF EXISTS "Allow authenticated users to read employees" ON employees;
-DROP POLICY IF EXISTS "Allow authenticated users to insert employees" ON employees;
-DROP POLICY IF EXISTS "Allow authenticated users to update employees" ON employees;
-DROP POLICY IF EXISTS "Allow authenticated users to delete employees" ON employees;
-
-DROP POLICY IF EXISTS "Users can read own tasks" ON tasks;
-DROP POLICY IF EXISTS "Users can insert own tasks" ON tasks;
-DROP POLICY IF EXISTS "Users can update own tasks" ON tasks;
-DROP POLICY IF EXISTS "Users can delete own tasks" ON tasks;
-DROP POLICY IF EXISTS "Allow authenticated users to read tasks" ON tasks;
-DROP POLICY IF EXISTS "Allow authenticated users to insert tasks" ON tasks;
-DROP POLICY IF EXISTS "Allow authenticated users to update tasks" ON tasks;
-DROP POLICY IF EXISTS "Allow authenticated users to delete tasks" ON tasks;
+DO $$ 
+DECLARE
+    pol RECORD;
+BEGIN
+    -- Drop all policies on employees table
+    FOR pol IN 
+        SELECT policyname 
+        FROM pg_policies 
+        WHERE tablename = 'employees'
+    LOOP
+        EXECUTE format('DROP POLICY IF EXISTS %I ON employees', pol.policyname);
+    END LOOP;
+    
+    -- Drop all policies on tasks table
+    FOR pol IN 
+        SELECT policyname 
+        FROM pg_policies 
+        WHERE tablename = 'tasks'
+    LOOP
+        EXECUTE format('DROP POLICY IF EXISTS %I ON tasks', pol.policyname);
+    END LOOP;
+END $$;
 
 -- Step 3: Add user_id columns if they don't exist
 ALTER TABLE employees 
@@ -33,12 +39,27 @@ ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id) ON DELETE CASCAD
 ALTER TABLE tasks 
 ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE;
 
--- Step 4: Create indexes
-CREATE INDEX IF NOT EXISTS idx_employees_user_id ON employees(user_id);
-CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id);
+-- Step 4: Make user_id NOT NULL (important for RLS to work properly)
+-- First, set a default for existing rows (you can change this or delete old data)
+-- UPDATE employees SET user_id = (SELECT id FROM auth.users LIMIT 1) WHERE user_id IS NULL;
+-- UPDATE tasks SET user_id = (SELECT id FROM auth.users LIMIT 1) WHERE user_id IS NULL;
 
--- Step 5: Create NEW user isolation policies
--- EMPLOYEES
+-- Then make the column required
+-- ALTER TABLE employees ALTER COLUMN user_id SET NOT NULL;
+-- ALTER TABLE tasks ALTER COLUMN user_id SET NOT NULL;
+
+-- Step 5: Create indexes for performance
+DROP INDEX IF EXISTS idx_employees_user_id;
+DROP INDEX IF EXISTS idx_tasks_user_id;
+CREATE INDEX idx_employees_user_id ON employees(user_id);
+CREATE INDEX idx_tasks_user_id ON tasks(user_id);
+
+-- Step 6: Enable RLS
+ALTER TABLE employees ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
+
+-- Step 7: Create NEW user isolation policies
+-- EMPLOYEES POLICIES
 CREATE POLICY "Users can read own employees"
 ON employees FOR SELECT
 TO authenticated
@@ -60,7 +81,7 @@ ON employees FOR DELETE
 TO authenticated
 USING (auth.uid() = user_id);
 
--- TASKS
+-- TASKS POLICIES
 CREATE POLICY "Users can read own tasks"
 ON tasks FOR SELECT
 TO authenticated
@@ -82,15 +103,88 @@ ON tasks FOR DELETE
 TO authenticated
 USING (auth.uid() = user_id);
 
--- Step 6: Verify
-SELECT 'Columns added:' as status;
-SELECT column_name, data_type, is_nullable
+-- Step 8: Verify setup
+SELECT 'RLS Status:' as check_name;
+SELECT tablename, rowsecurity 
+FROM pg_tables 
+WHERE schemaname = 'public' 
+AND tablename IN ('employees', 'tasks');
+
+SELECT '' as separator;
+SELECT 'Columns:' as check_name;
+SELECT table_name, column_name, data_type, is_nullable
 FROM information_schema.columns
 WHERE table_name IN ('employees', 'tasks')
-AND column_name = 'user_id';
+AND column_name = 'user_id'
+ORDER BY table_name;
 
-SELECT 'Policies created:' as status;
-SELECT tablename, policyname
+SELECT '' as separator;
+SELECT 'Policies:' as check_name;
+SELECT tablename, policyname, cmd, roles, qual, with_check
 FROM pg_policies
 WHERE tablename IN ('employees', 'tasks')
 ORDER BY tablename, policyname;
+
+-- ==========================================
+-- TESTING SECTION
+-- ==========================================
+-- Run these tests after the migration to verify everything works
+
+SELECT '' as separator;
+SELECT '=== TESTING SECTION ===' as info;
+
+-- Test 1: Check if you're authenticated
+SELECT '' as separator;
+SELECT 'Test 1: Authentication Check' as test;
+SELECT 
+    CASE 
+        WHEN auth.uid() IS NOT NULL THEN '✅ Authenticated as: ' || auth.uid()::text
+        ELSE '❌ NOT AUTHENTICATED - You must be logged in to Supabase Dashboard'
+    END as result;
+
+-- Test 2: Try inserting a test employee
+SELECT '' as separator;
+SELECT 'Test 2: Insert Test Employee' as test;
+DO $$ 
+BEGIN
+    IF auth.uid() IS NOT NULL THEN
+        -- Try inserting a test employee
+        INSERT INTO employees (first_name, last_name, email, role, phone, user_id)
+        VALUES ('Test', 'Employee', 'test@example.com', 'Tester', '1234567890', auth.uid())
+        ON CONFLICT (email, user_id) DO NOTHING;
+        
+        RAISE NOTICE '✅ Test employee inserted successfully!';
+    ELSE
+        RAISE NOTICE '❌ Cannot test - not authenticated. Log in to Supabase Dashboard first.';
+    END IF;
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE '❌ Insert failed: %', SQLERRM;
+END $$;
+
+-- Test 3: Check if you can read your own data
+SELECT '' as separator;
+SELECT 'Test 3: Read Your Data' as test;
+SELECT 
+    COUNT(*) as your_employee_count,
+    CASE 
+        WHEN COUNT(*) > 0 THEN '✅ Can read own data - RLS working correctly!'
+        ELSE '⚠️ No employees yet (empty for new user) or RLS may be blocking'
+    END as result
+FROM employees
+WHERE user_id = auth.uid();
+
+-- Test 4: List your employees
+SELECT '' as separator;
+SELECT 'Test 4: Your Employees' as test;
+SELECT id, first_name, last_name, email, role
+FROM employees
+WHERE user_id = auth.uid()
+LIMIT 5;
+
+-- Clean up test data (uncomment if you want to remove test employee)
+-- DELETE FROM employees WHERE email = 'test@example.com' AND user_id = auth.uid();
+
+SELECT '' as separator;
+SELECT '=== MIGRATION COMPLETE ===' as status;
+SELECT 'If all tests passed with ✅, your database is ready!' as message;
+SELECT 'If you see ❌, check the error messages above.' as tip;
