@@ -136,12 +136,31 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   const addEmployee = async (employee: Omit<Employee, 'id'>) => {
     try {
+      console.log('Attempting to add employee:', employee);
       const newEmployee = await api.createEmployee(employee);
+      console.log('Employee added successfully:', newEmployee);
       setEmployees([...employees, newEmployee]);
       toast.success('Employee added successfully');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error adding employee:', error);
-      toast.error('Failed to add employee');
+      
+      // More detailed error messages
+      let errorMessage = 'Failed to add employee';
+      if (error?.message) {
+        errorMessage = error.message;
+      }
+      if (error?.code === 'PGRST116') {
+        errorMessage = 'Permission denied. Check Row Level Security policies.';
+      }
+      if (error?.code === '23505') {
+        errorMessage = 'An employee with this email already exists.';
+      }
+      if (error?.message?.includes('violates row-level security')) {
+        errorMessage = 'Authentication error. Please sign out and sign in again.';
+      }
+      
+      toast.error(errorMessage);
+      console.error('Full error details:', JSON.stringify(error, null, 2));
       throw error;
     }
   };

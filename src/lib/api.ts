@@ -34,13 +34,24 @@ export async function getEmployeeById(id: number) {
 
 export async function createEmployee(employee: Omit<Employee, 'id'>) {
     const userId = await getCurrentUserId();
+    console.log('Creating employee with user_id:', userId);
+    console.log('Employee data:', employee);
+    
     const { data, error } = await supabase
         .from('employees')
         .insert({ ...employee, user_id: userId })
         .select()
         .single();
 
-    if (error) throw error;
+    if (error) {
+        console.error('Supabase error creating employee:', error);
+        console.error('Error code:', error.code);
+        console.error('Error message:', error.message);
+        console.error('Error details:', error.details);
+        throw error;
+    }
+    
+    console.log('Employee created successfully:', data);
     return data as Employee;
 }
 
